@@ -476,7 +476,6 @@ func TestPublishBulk(t *testing.T) {
 	e.PUT("/api/:namespace/:queue/bulk", handlers.PublishBulk)
 	e.HandleContext(c)
 	if resp.Code != http.StatusCreated {
-		fmt.Println(string(resp.Body.Bytes()))
 		t.Fatal("Failed to publish")
 	}
 	var data struct {
@@ -513,7 +512,7 @@ func publishTestJob(ns, q string, delay uint32) (body []byte, jobID string) {
 	if _, err := rand.Read(body); err != nil {
 		panic(err)
 	}
-	jobID, _ = e.Publish(ns, q, body, 60, delay, 1)
+	jobID, _ = e.Publish(ns, q, body, 60, delay, 1, 0)
 	return body, jobID
 }
 

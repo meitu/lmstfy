@@ -1,4 +1,4 @@
-package redis
+package redis_v2
 
 import (
 	"fmt"
@@ -52,6 +52,9 @@ func setup() {
 
 	if err = PreloadDeadLetterLuaScript(R); err != nil {
 		panic(fmt.Sprintf("Failed to preload deadletter lua script: %s", err))
+	}
+	if err = PreloadQueueLuaScript(R); err != nil {
+		panic(fmt.Sprintf("Failed to preload queue lua script: %s", err))
 	}
 }
 

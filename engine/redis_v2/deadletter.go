@@ -1,9 +1,8 @@
-package redis
+package redis_v2
 
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/bitleak/lmstfy/engine"
 	go_redis "github.com/go-redis/redis"
@@ -16,14 +15,19 @@ local queue = KEYS[2]
 local poolPrefix = KEYS[3]
 local limit = tonumber(ARGV[1])
 local respawnTTL = tonumber(ARGV[2])
-
+local score = tonumber(ARGV[3])
 for i = 1, limit do
-    local data = redis.call("RPOPLPUSH", deadletter, queue)
+    local data = redis.call("RPOP", deadletter)
 	if data == false then
 		return i - 1  -- deadletter is empty
 	end
     -- unpack the jobID, and set the TTL
-    local _, jobID = struct.unpack("HHc0", data)
+    local _, jobID, priority = struct.unpack("HHc0H", data)
+    -- decrease score to make tasks FIFO in queue when score was the same
+	score = score -1
+	-- 2199023255552 was 1<<41(avoid to use bit left shift)
+	priority = 2199023255552 * priority + score
+	redis.call("ZADD", queue, priority, data)
     if respawnTTL > 0 then
 		redis.call("EXPIRE", poolPrefix .. "/" .. jobID, respawnTTL)
 	end
@@ -34,14 +38,13 @@ return limit  -- deadletter has more data when return value is >= limit
 local deadletter = KEYS[1]
 local poolPrefix = KEYS[2]
 local limit = tonumber(ARGV[1])
-
 for i = 1, limit do
 	local data = redis.call("RPOP", deadletter)
 	if data == false then
 		return i - 1
 	end
 	-- unpack the jobID, and delete the job from the job pool
-	local _, jobID = struct.unpack("HHc0", data)
+	local _, jobID, _ = struct.unpack("HHc0H", data)
 	redis.call("DEL", poolPrefix .. "/" .. jobID)
 end
 return limit
@@ -147,7 +150,10 @@ func (dl *DeadLetter) Delete(limit int64) (count int64, err error) {
 				if isLuaScriptGone(err) {
 					if err := PreloadDeadLetterLuaScript(dl.redis); err != nil {
 						logger.WithField("err", err).Error("Failed to load deadletter lua script")
+						return 0, err
 					}
+					dl.lua_delete_sha = _lua_delete_deadletter_sha
+					dl.lua_respawn_sha = _lua_respawn_deadletter_sha
 					continue
 				}
 				return count, err
@@ -198,18 +204,21 @@ func (dl *DeadLetter) Respawn(limit, ttlSecond int64) (count int64, err error) {
 		Queue:     dl.queue,
 	}).String()
 	poolPrefix := PoolJobKeyPrefix(dl.namespace, dl.queue)
-	if limit > 1 {
+	if limit > 0 {
 		var batchSize int64 = 100
 		if batchSize > limit {
 			batchSize = limit
 		}
 		for {
-			val, err := dl.redis.Conn.EvalSha(dl.lua_respawn_sha, []string{dl.Name(), queueName, poolPrefix}, batchSize, ttlSecond).Result() // Respawn `batchSize` jobs at a time
+			val, err := dl.redis.Conn.EvalSha(dl.lua_respawn_sha, []string{dl.Name(), queueName, poolPrefix}, batchSize, ttlSecond, timeScore()).Result() // Respawn `batchSize` jobs at a time
 			if err != nil {
 				if isLuaScriptGone(err) {
 					if err := PreloadDeadLetterLuaScript(dl.redis); err != nil {
 						logger.WithField("err", err).Error("Failed to load deadletter lua script")
+						return 0, err
 					}
+					dl.lua_delete_sha = _lua_delete_deadletter_sha
+					dl.lua_respawn_sha = _lua_respawn_deadletter_sha
 					continue
 				}
 				return 0, err
@@ -227,25 +236,6 @@ func (dl *DeadLetter) Respawn(limit, ttlSecond int64) (count int64, err error) {
 			}
 		}
 		return count, nil
-	} else if limit == 1 {
-		data, err := dl.redis.Conn.RPopLPush(dl.Name(), queueName).Result()
-		if err != nil {
-			if err == go_redis.Nil {
-				return 0, nil
-			}
-			return 0, err
-		}
-		_, jobID, err := structUnpack(data)
-		if err != nil {
-			return 1, err
-		}
-		if ttlSecond > 0 {
-			err = dl.redis.Conn.Expire(PoolJobKey2(dl.namespace, dl.queue, jobID), time.Duration(ttlSecond)*time.Second).Err()
-		}
-		if err != nil {
-			return 1, fmt.Errorf("failed to set TTL on respawned job[%s]: %s", jobID, err)
-		}
-		return 1, nil
 	} else {
 		return 0, nil
 	}

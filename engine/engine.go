@@ -7,7 +7,7 @@ import (
 )
 
 type Engine interface {
-	Publish(namespace, queue string, body []byte, ttlSecond, delaySecond uint32, tries uint16) (jobID string, err error)
+	Publish(namespace, queue string, body []byte, ttlSecond, delaySecond uint32, tries uint16, priority uint8) (jobID string, err error)
 	Consume(namespace, queue string, ttrSecond, timeoutSecond uint32) (job Job, err error)
 	ConsumeMulti(namespace string, queues []string, ttrSecond, timeoutSecond uint32) (job Job, err error)
 	ConsumeMultiWithFrozenTries(namespace string, queues []string, ttrSecond, timeoutSecond uint32) (job Job, err error)
@@ -55,10 +55,6 @@ func GetPoolsByKind(kind string) []string {
 	return pools
 }
 
-func GetPools() []string {
-	return GetPoolsByKind("redis")
-}
-
 func ExistsPool(pool string) bool {
 	if pool == "" {
 		pool = config.DefaultPoolName
@@ -66,15 +62,25 @@ func ExistsPool(pool string) bool {
 	return GetEngine(pool) != nil
 }
 
+func ListKinds() []string {
+	kinds := make([]string, 0)
+	for name := range engines {
+		kinds = append(kinds, name)
+	}
+	return kinds
+}
+
 func GetEngine(pool string) Engine {
 	if pool == "" {
 		pool = config.DefaultPoolName
 	}
-	e := GetEngineByKind("migration", pool)
-	if e != nil {
-		return e
+	allowKinds := ListKinds()
+	for _, kind := range allowKinds {
+		if e := GetEngineByKind(kind, pool); e != nil {
+			return e
+		}
 	}
-	return GetEngineByKind("redis", pool)
+	return nil
 }
 
 func Register(kind, pool string, e Engine) {

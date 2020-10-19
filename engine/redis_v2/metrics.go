@@ -1,4 +1,4 @@
-package redis
+package redis_v2
 
 import (
 	"fmt"
@@ -47,7 +47,7 @@ var (
 
 const (
 	Namespace = "infra"
-	Subsystem = "lmstfy_redis"
+	Subsystem = "lmstfy_redis_v2"
 )
 
 func setupMetrics() {

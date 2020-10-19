@@ -1,4 +1,4 @@
-package redis
+package redis_v2
 
 import (
 	"encoding/json"
@@ -36,9 +36,12 @@ func NewEngine(redisName string, conn *go_redis.Client) (engine.Engine, error) {
 	if err := PreloadDeadLetterLuaScript(redis); err != nil {
 		return nil, err
 	}
+	if err := PreloadQueueLuaScript(redis); err != nil {
+		return nil, err
+	}
 	go RedisInstanceMonitor(redis)
 	meta := NewMetaManager(redis)
-	timer, err := NewTimer("timer_set", redis, time.Second)
+	timer, err := NewTimer("timer_set_v2", redis, time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +60,7 @@ func NewEngine(redisName string, conn *go_redis.Client) (engine.Engine, error) {
 	}, nil
 }
 
-func (e *Engine) Publish(namespace, queue string, body []byte, ttlSecond, delaySecond uint32, tries uint16) (jobID string, err error) {
+func (e *Engine) Publish(namespace, queue string, body []byte, ttlSecond, delaySecond uint32, tries uint16, priority uint8) (jobID string, err error) {
 	defer func() {
 		if err == nil {
 			metrics.publishJobs.WithLabelValues(e.redis.Name).Inc()
@@ -66,7 +69,7 @@ func (e *Engine) Publish(namespace, queue string, body []byte, ttlSecond, delayS
 	}()
 	e.meta.RecordIfNotExist(namespace, queue)
 	e.monitor.MonitorIfNotExist(namespace, queue)
-	job := engine.NewJob(namespace, queue, body, ttlSecond, delaySecond, tries)
+	job := engine.NewJob(namespace, queue, body, ttlSecond, delaySecond, tries, priority)
 	if tries == 0 {
 		return job.ID(), nil
 	}

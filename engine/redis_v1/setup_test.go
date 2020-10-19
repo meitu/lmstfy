@@ -1,22 +1,18 @@
-package push
+package redis_v1
 
 import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
-
-	"github.com/bitleak/lmstfy/helper"
-
-	"github.com/sirupsen/logrus"
 
 	"github.com/bitleak/lmstfy/config"
-	"github.com/bitleak/lmstfy/engine/redis_v1"
+	"github.com/bitleak/lmstfy/helper"
+	"github.com/sirupsen/logrus"
 )
 
 var (
-	CONF   *config.Config
-	logger *logrus.Logger
+	CONF *config.Config
+	R    *RedisInstance
 )
 
 func init() {
@@ -38,11 +34,8 @@ PLEASE setup env LMSTFY_TEST_CONFIG to the config file first
 }
 
 func setup() {
-	if err := redis_v1.Setup(CONF, logger); err != nil {
-		panic(fmt.Sprintf("Failed to setup redis engine: %s", err))
-	}
-	// clear admin redis
-	conn := helper.NewRedisClient(&CONF.AdminRedis, nil)
+	poolConf := CONF.Pool["default"]
+	conn := helper.NewRedisClient(&poolConf, nil)
 	err := conn.Ping().Err()
 	if err != nil {
 		panic(fmt.Sprintf("Failed to ping: %s", err))
@@ -52,13 +45,17 @@ func setup() {
 		panic(fmt.Sprintf("Failed to flush db: %s", err))
 	}
 
-	if err := Setup(CONF, 100*time.Millisecond, logger); err != nil {
-		panic(fmt.Sprintf("Failed to setup push engine: %s", err))
+	R = &RedisInstance{
+		Name: "unittest",
+		Conn: conn,
+	}
+
+	if err = PreloadDeadLetterLuaScript(R); err != nil {
+		panic(fmt.Sprintf("Failed to preload deadletter lua script: %s", err))
 	}
 }
 
 func teardown() {
-	Shutdown()
 }
 
 func TestMain(m *testing.M) {
