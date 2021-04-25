@@ -6,10 +6,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/bitleak/lmstfy/auth"
 	"github.com/bitleak/lmstfy/config"
 	"github.com/bitleak/lmstfy/engine"
-	"github.com/gin-gonic/gin"
 )
 
 func getToken(c *gin.Context) (token string) {
@@ -30,7 +31,7 @@ func parseToken(rawToken string) (pool, token string) {
 	return config.DefaultPoolName, rawToken
 }
 
-func SetupQueueEngine(c *gin.Context) {
+func SetupEngine(c *gin.Context) {
 	pool, token := parseToken(getToken(c))
 	c.Set("pool", pool)
 	c.Set("token", token)
@@ -41,6 +42,63 @@ func SetupQueueEngine(c *gin.Context) {
 		return
 	}
 	c.Set("engine", e)
+}
+
+func SetupQueue(c *gin.Context) {
+	e := c.MustGet("engine").(engine.Engine)
+	meta := engine.QueueMeta{
+		Namespace: c.Param("namespace"),
+		Queue:     c.Param("queue"),
+	}
+	queue, err := e.Queue(meta)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.Set("meta", meta)
+	c.Set("queue", queue)
+}
+
+func SetupQueues(c *gin.Context) {
+	e := c.MustGet("engine").(engine.Engine)
+	queues := c.Param("queue") // NOTE: param name should be `queues`, refer to comment in route.go
+	namespace := c.Param("namespace")
+	var metaList []engine.QueueMeta
+	for _, q := range strings.Split(queues, ",") {
+		if q == "" {
+			continue
+		}
+		metaList = append(metaList, engine.QueueMeta{
+			Namespace: namespace,
+			Queue:     q,
+		})
+	}
+	if len(metaList) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid queue name(s)"})
+		return
+	}
+	queue, err := e.Queues(metaList)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.Set("meta", metaList)
+	c.Set("queue", queue)
+}
+
+func SetupDeadLetter(c *gin.Context) {
+	e := c.MustGet("engine").(engine.Engine)
+	meta := engine.QueueMeta{
+		Namespace: c.Param("namespace"),
+		Queue:     c.Param("queue"),
+	}
+	dl, err := e.DeadLetter(meta)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.Set("meta", meta)
+	c.Set("deadletter", dl)
 }
 
 func ValidateToken(c *gin.Context) {

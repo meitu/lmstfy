@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/bitleak/lmstfy/engine"
 )
 
 type Metrics struct {
@@ -155,7 +157,10 @@ func NewSizeMonitor(redis *RedisInstance, timer *Timer, preloadData map[string][
 	}
 	for ns, queues := range preloadData {
 		for _, q := range queues {
-			m.MonitorIfNotExist(ns, q)
+			m.MonitorIfNotExist(engine.QueueMeta{
+				Namespace: ns,
+				Queue:     q,
+			})
 		}
 	}
 	return m
@@ -168,29 +173,34 @@ func (m *SizeMonitor) Loop() {
 	}
 }
 
-func (m *SizeMonitor) MonitorIfNotExist(namespace, queue string) {
-	qname := fmt.Sprintf("q/%s/%s", namespace, queue)
+func (m *SizeMonitor) MonitorIfNotExist(meta engine.QueueMeta) {
+	qname := fmt.Sprintf("q/%s/%s", meta.Namespace, meta.Queue)
 	m.rwmu.RLock()
 	if m.providers[qname] != nil { // queue and deadletter are monitored together, so only test queue
 		m.rwmu.RUnlock()
 		return
 	}
 	m.rwmu.RUnlock()
-	dname := fmt.Sprintf("d/%s/%s", namespace, queue)
+	dname := fmt.Sprintf("d/%s/%s", meta.Namespace, meta.Queue)
 	m.rwmu.Lock()
-	m.providers[qname] = NewQueue(namespace, queue, m.redis, nil)
-	m.providers[dname], _ = NewDeadLetter(namespace, queue, m.redis)
+	m.providers[qname] = &Queue{
+		meta: meta,
+		e: &Engine{
+			redis: m.redis,
+		},
+	}
+	m.providers[dname] = &DeadLetter{meta: meta, redis: m.redis}
 	m.rwmu.Unlock()
 }
 
-func (m *SizeMonitor) Remove(namespace, queue string) {
-	qname := fmt.Sprintf("q/%s/%s", namespace, queue)
-	dname := fmt.Sprintf("d/%s/%s", namespace, queue)
+func (m *SizeMonitor) Remove(meta engine.QueueMeta) {
+	qname := fmt.Sprintf("q/%s/%s", meta.Namespace, meta.Queue)
+	dname := fmt.Sprintf("d/%s/%s", meta.Namespace, meta.Queue)
 	m.rwmu.Lock()
 	delete(m.providers, qname)
 	delete(m.providers, dname)
-	metrics.queueSizes.DeleteLabelValues(m.redis.Name, namespace, queue)
-	metrics.deadletterSizes.DeleteLabelValues(m.redis.Name, namespace, queue)
+	metrics.queueSizes.DeleteLabelValues(m.redis.Name, meta.Namespace, meta.Queue)
+	metrics.deadletterSizes.DeleteLabelValues(m.redis.Name, meta.Namespace, meta.Queue)
 	m.rwmu.Unlock()
 }
 
