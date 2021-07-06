@@ -12,13 +12,16 @@ import (
 
 	"github.com/bitleak/lmstfy/auth"
 	"github.com/bitleak/lmstfy/config"
+	"github.com/bitleak/lmstfy/engine"
 	"github.com/bitleak/lmstfy/engine/migration"
 	redis_engine "github.com/bitleak/lmstfy/engine/redis"
+	redis_engine_v2 "github.com/bitleak/lmstfy/engine/redis-v2"
 	"github.com/bitleak/lmstfy/log"
 	"github.com/bitleak/lmstfy/server/handlers"
 	"github.com/bitleak/lmstfy/server/middleware"
 	"github.com/bitleak/lmstfy/throttler"
 	"github.com/bitleak/lmstfy/version"
+
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
@@ -161,12 +164,19 @@ func main() {
 	registerSignal(shutdown, func() {
 		log.ReopenLogs(conf.LogDir, accessLogger, errorLogger)
 	})
+	if err := redis_engine_v2.Setup(conf, errorLogger); err != nil {
+		panic(fmt.Sprintf("Failed to setup redis v2 engine: %s", err))
+	}
 	if err := redis_engine.Setup(conf, errorLogger); err != nil {
 		panic(fmt.Sprintf("Failed to setup redis engine: %s", err))
 	}
 	if err := migration.Setup(conf, errorLogger); err != nil {
 		panic(fmt.Sprintf("Failed to setup migration engine: %s", err))
 	}
+	if engine.GetEngine("") == nil {
+		panic("default engine not found")
+	}
+
 	if err := auth.Setup(conf); err != nil {
 		panic(fmt.Sprintf("Failed to setup auth module: %s", err))
 	}

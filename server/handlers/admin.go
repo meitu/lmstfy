@@ -13,6 +13,7 @@ import (
 
 	"github.com/bitleak/lmstfy/auth"
 	"github.com/bitleak/lmstfy/engine"
+	redis_v2 "github.com/bitleak/lmstfy/engine/redis-v2"
 	"github.com/bitleak/lmstfy/server/middleware"
 	"github.com/bitleak/lmstfy/throttler"
 	"github.com/bitleak/lmstfy/uuid"
@@ -24,10 +25,14 @@ func PrometheusMetrics(c *gin.Context) {
 	promhttp.Handler().ServeHTTP(c.Writer, c.Request)
 }
 
-// GET /pools/
+// GET /pools/?kind=
 func ListPools(c *gin.Context) {
-	// TODO: support kind
-	c.IndentedJSON(http.StatusOK, engine.GetPools())
+	kind := c.DefaultQuery("kind", engine.KindRedis)
+	if err := engine.ValidateKind(kind); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.IndentedJSON(http.StatusOK, engine.GetPoolsByKind(kind))
 }
 
 // GET /token/:namespace
@@ -35,17 +40,13 @@ func ListTokens(c *gin.Context) {
 	tm := auth.GetTokenManager()
 	tokens, err := tm.List(c.Query("pool"), c.Param("namespace"))
 	if err != nil {
-		if err == auth.ErrPoolNotExist {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		} else {
-			logger := GetHTTPLogger(c)
-			logger.WithFields(logrus.Fields{
-				"pool":      c.Query("pool"),
-				"namespace": c.Param("namespace"),
-				"err":       err,
-			}).Error("Failed to list the token")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		}
+		logger := GetHTTPLogger(c)
+		logger.WithFields(logrus.Fields{
+			"pool":      c.Query("pool"),
+			"namespace": c.Param("namespace"),
+			"err":       err,
+		}).Error("Failed to list the token")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 	c.IndentedJSON(http.StatusOK, gin.H{"tokens": tokens})
@@ -90,7 +91,7 @@ func NewToken(c *gin.Context) {
 	tm := auth.GetTokenManager()
 	token, err := tm.New(pool, namespace, rawToken, desc)
 	if err != nil {
-		if err == auth.ErrPoolNotExist || err == auth.ErrTokenExist {
+		if err == engine.ErrPoolNotExist || err == auth.ErrTokenExist {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		} else {
 			logger := GetHTTPLogger(c)
@@ -113,7 +114,7 @@ func DeleteToken(c *gin.Context) {
 	pool, token := parseToken(c.Param("token"))
 	namespace := c.Param("namespace")
 	if err := tm.Delete(pool, namespace, token); err != nil {
-		if err == auth.ErrPoolNotExist {
+		if err == engine.ErrPoolNotExist {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		} else {
 			logger.WithFields(logrus.Fields{
@@ -236,6 +237,31 @@ func SetLimiter(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"limiter": limiter})
 }
 
+// POST /queue/:namespace/:queue?pool=
+func RegisterQueue(c *gin.Context) {
+	logger := GetHTTPLogger(c)
+	pool := c.Query("pool")
+	namespace := c.Param("namespace")
+	queue := c.Param("queue")
+	e := engine.GetEngineByKind(engine.KindRedisV2, pool)
+	if e == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": engine.ErrPoolNotExist.Error()})
+		return
+	}
+	err := e.(*redis_v2.Engine).RegisterQueue(namespace, queue)
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"pool":      pool,
+			"namespace": namespace,
+			"queue":     queue,
+			"err":       err,
+		}).Error("Failed to register queue")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"namespace": namespace, "queue": queue})
+}
+
 // GET /version
 func Version(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, gin.H{
@@ -256,11 +282,16 @@ func PProf(c *gin.Context) {
 	}
 }
 
-// GET /info?pool=
+// GET /info?pool=&kind=
 // List all namespaces and queues
 func EngineMetaInfo(c *gin.Context) {
 	logger := GetHTTPLogger(c)
-	e := engine.GetEngineByKind(engine.KindRedis, c.Query("pool"))
+	kind := c.DefaultQuery("kind", engine.KindRedis)
+	if err := engine.ValidateKind(kind); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	e := engine.GetEngineByKind(kind, c.Query("pool"))
 	if e == nil {
 		return
 	}
@@ -268,7 +299,7 @@ func EngineMetaInfo(c *gin.Context) {
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"error": err,
-			"kind":  engine.KindRedis,
+			"kind":  kind,
 			"pool":  c.Query("pool"),
 		}).Error("dump engine meta info error")
 		return

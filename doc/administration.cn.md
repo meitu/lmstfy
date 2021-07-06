@@ -10,7 +10,7 @@ GET /pools/
 
 #### Request Query
 
-不需要参数
+- kind: optional, 默认 "redis"
 
 ### 创建 `token`
 
@@ -43,6 +43,16 @@ GET /token/:namespace
 #### Request Query
 - pool: optional, 默认 "default"
 
+### 创建v2版本 `queue`
+
+```
+POST /queue/:namespace/:queue
+```
+
+#### Request Query
+
+- pool: optional, 默认 "default"
+
 ### 列出所有 `namespace` 和 `queue`
 
 ```
@@ -50,6 +60,7 @@ GET /info
 ```
 
 #### Request Query
+- kind: optional, 默认 "redis"
 - pool: optional, 默认 "default"
 
 ### 获取 prometheus 监控指标 

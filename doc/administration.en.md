@@ -10,7 +10,7 @@ GET /pools/
 
 #### Request Query
 
-no parameter
+- kind: optional, Default: "redis"
 
 ### Create Token 
 
@@ -43,6 +43,16 @@ GET /token/:namespace
 #### Request Query
 - pool: optional, Default: "default"
 
+### Register v2 version `queue`
+
+```
+POST /queue/:namespace/:queue
+```
+
+#### Request Query
+
+- pool: optional, Default: "default"
+
 ### List Namespace And Queue
 
 ```
@@ -50,6 +60,7 @@ GET /info
 ```
 
 #### Request Query
+- kind: optional, Default: "redis"
 - pool: optional, 默认 "default"
 
 ### Get Prometheus Metrics 
